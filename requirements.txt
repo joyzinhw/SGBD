@@ -1,0 +1,6 @@
+# As seguintes bibliotecas são parte da biblioteca padrão do Python e não precisam ser instaladas via pip.
+sqlite3
+csv
+time
+os
+psutil
