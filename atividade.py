@@ -2,7 +2,8 @@ import sqlite3
 import time
 import psutil
 import os
-import csv
+import matplotlib.pyplot as plt
+import pandas as pd
 
 class BTreeNode:
     def __init__(self, t):
@@ -12,7 +13,7 @@ class BTreeNode:
         self.leaf = True
 
     def split(self, parent, payload):
-        new_node = BTreeNode(self.t)
+        new_node = self.__class__(self.t)
         mid_point = self.size // 2
         split_value = self.keys[mid_point]
         parent.add_key(split_value)
@@ -89,6 +90,7 @@ class BTree:
             return self.search(key, node.children[i])
 
     def delete(self, key, node=None):
+        # Deleção da Árvore B (não implementado)
         pass
 
     def __str__(self):
@@ -112,14 +114,10 @@ class BTree:
 class SimpleDatabase:
     def __init__(self, t):
         self.tree = BTree(t)
-        self.conn = sqlite3.connect('database.db')  # Cria ou conecta ao arquivo database.db
+        self.conn = sqlite3.connect('database.db')
         self.cursor = self.conn.cursor()
         self._create_table()
-
-        # Inicializa o CSV
-        with open('log_operations.csv', mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(["Operação", "Chave", "Valor", "Tempo de Execução (segundos)", "Status"])
+        self.performance_data = []  # Armazena dados de desempenho
 
     def _create_table(self):
         self.cursor.execute('''
@@ -130,107 +128,87 @@ class SimpleDatabase:
         ''')
         self.conn.commit()
 
-    def log_operation(self, operation, key, value, execution_time, status):
-        # Loga no terminal
-        if operation == "CREATE":
-            if status == "Success":
-                print(f"Chave {key} criada com sucesso. Tempo de execução: {execution_time} segundos.")
-            else:
-                print(f"Chave {key} já existe. Tempo de execução: {execution_time} segundos.")
-        elif operation == "READ":
-            if status == "Success":
-                print(f"Chave {key} encontrada. Valor: {value}. Tempo de execução: {execution_time} segundos.")
-            else:
-                print(f"Chave {key} não encontrada. Tempo de execução: {execution_time} segundos.")
-        elif operation == "UPDATE":
-            if status == "Success":
-                print(f"Chave {key} atualizada com sucesso. Tempo de execução: {execution_time} segundos.")
-            else:
-                print(f"Chave {key} não encontrada. Tempo de execução: {execution_time} segundos.")
-        elif operation == "DELETE":
-            if status == "Success":
-                print(f"Chave {key} removida com sucesso. Tempo de execução: {execution_time} segundos.")
-            else:
-                print(f"Chave {key} não encontrada. Tempo de execução: {execution_time} segundos.")
-
-        # Salva no CSV
-        with open('log_operations.csv', mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([operation, key, value, execution_time, status])
-
     def create(self, key, value):
         start_time = time.time()
         if self.read(key):
-            execution_time = time.time() - start_time
-            self.log_operation("CREATE", key, value, execution_time, "Failed")
             return False
-
         self.tree.insert(key)
         self.cursor.execute('INSERT INTO KeyValue (key, value) VALUES (?, ?)', (key, value))
         self.conn.commit()
-        
-        execution_time = time.time() - start_time
-        self.log_operation("CREATE", key, value, execution_time, "Success")
+        end_time = time.time()
+        exec_time = end_time - start_time
+        self.performance_data.append(('Create', key, exec_time, self.memory_usage()))
         return True
 
     def read(self, key):
         start_time = time.time()
         self.cursor.execute('SELECT value FROM KeyValue WHERE key = ?', (key,))
         result = self.cursor.fetchone()
-        execution_time = time.time() - start_time
-
-        if result:
-            self.log_operation("READ", key, result[0], execution_time, "Success")
-            return result[0]
-        else:
-            self.log_operation("READ", key, None, execution_time, "Failed")
-            return None
+        end_time = time.time()
+        exec_time = end_time - start_time
+        self.performance_data.append(('Read', key, exec_time, self.memory_usage()))
+        return result[0] if result else None
 
     def update(self, key, value):
         start_time = time.time()
         if not self.read(key):
-            execution_time = time.time() - start_time
-            self.log_operation("UPDATE", key, value, execution_time, "Failed")
             return False
-
         self.cursor.execute('UPDATE KeyValue SET value = ? WHERE key = ?', (value, key))
         self.conn.commit()
-        
-        execution_time = time.time() - start_time
-        self.log_operation("UPDATE", key, value, execution_time, "Success")
+        end_time = time.time()
+        exec_time = end_time - start_time
+        self.performance_data.append(('Update', key, exec_time, self.memory_usage()))
         return True
 
     def delete(self, key):
         start_time = time.time()
         if not self.read(key):
-            execution_time = time.time() - start_time
-            self.log_operation("DELETE", key, None, execution_time, "Failed")
             return False
-
         self.cursor.execute('DELETE FROM KeyValue WHERE key = ?', (key,))
         self.conn.commit()
-        
-        execution_time = time.time() - start_time
-        self.log_operation("DELETE", key, None, execution_time, "Success")
+        end_time = time.time()
+        exec_time = end_time - start_time
+        self.performance_data.append(('Delete', key, exec_time, self.memory_usage()))
         return True
 
     def memory_usage(self):
         process = psutil.Process(os.getpid())
         mem_info = process.memory_info()
-        return mem_info.rss / (1024 ** 2)  # Retorna o uso de memória em MB
+        return mem_info.rss / (1024 ** 2)  # Em MB
 
-    def __str__(self):
-        self.cursor.execute('SELECT * FROM KeyValue')
-        rows = self.cursor.fetchall()
-        return f"Árvore B:\n{self.tree}\nDados no SQLite:\n{rows}"
+    def plot_performance(self):
+        df = pd.DataFrame(self.performance_data, columns=['Operation', 'Key', 'Time (s)', 'Memory (MB)'])
+        print(df)  # Exibe a tabela com os dados
+
+        # Gráfico de Tempo de Execução
+        plt.figure(figsize=(12, 6))
+        for op in df['Operation'].unique():
+            subset = df[df['Operation'] == op]
+            plt.plot(subset['Key'], subset['Time (s)'], marker='o', label=op)
+        plt.title('Tempo de Execução por Operação')
+        plt.xlabel('Chave')
+        plt.ylabel('Tempo (s)')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+        # Gráfico de Consumo de Memória
+        plt.figure(figsize=(12, 6))
+        for op in df['Operation'].unique():
+            subset = df[df['Operation'] == op]
+            plt.plot(subset['Key'], subset['Memory (MB)'], marker='o', label=op)
+        plt.title('Consumo de Memória por Operação')
+        plt.xlabel('Chave')
+        plt.ylabel('Memória (MB)')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
 if __name__ == "__main__":
     db = SimpleDatabase(2)
 
     # Avaliação do desempenho
     def performance_test(db):
-        print(f"Uso de memória antes das operações: {db.memory_usage()} MB")
-
         # Inserção
         db.create(10, "Valor 10")
         db.create(20, "Valor 20")
@@ -242,13 +220,11 @@ if __name__ == "__main__":
 
         # Atualização
         db.update(10, "Novo Valor 10")
-        db.read(10)
 
         # Remoção
         db.delete(10)
-        
-        print(db)
 
-        print(f"Uso de memória após as operações: {db.memory_usage()} MB")
+        # Mostrar os gráficos de desempenho
+        db.plot_performance()
 
     performance_test(db)
